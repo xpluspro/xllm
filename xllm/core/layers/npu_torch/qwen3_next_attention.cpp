@@ -92,6 +92,13 @@ Qwen3NextAttentionImpl::Qwen3NextAttentionImpl(
   kv_size_ = num_kv_heads_ * head_dim_;
   scaling_ = 1.0f / std::sqrt(static_cast<float>(head_dim_));
   attn_output_gate_ = args.attn_output_gate();
+  const std::string& model_type = args.model_type();
+  enable_torch_prefill_fallback_ = model_type == "qwen3_5" ||
+                                   model_type == "qwen3_5_text" ||
+                                   model_type == "qwen3_5_moe" ||
+                                   model_type == "qwen3_5_moe_text" ||
+                                   model_type == "qwen3_5_mtp" ||
+                                   model_type == "qwen3_5_moe_mtp";
   // 1. QKV linear
   qkv_proj_ = register_module(
       "qkv_proj",
@@ -209,7 +216,8 @@ torch::Tensor Qwen3NextAttentionImpl::forward(
 
   rotary_emb_->forward(positions, q, k);
   auto out = std::get<0>(attn_->forward(attn_metadata, q, k, v, kv_cache));
-  if (attn_metadata.is_prefill && !attn_metadata.is_chunked_prefill &&
+  if (enable_torch_prefill_fallback_ && attn_metadata.is_prefill &&
+      !attn_metadata.is_chunked_prefill &&
       !torch::isfinite(out).all().item<bool>()) {
     out = run_torch_prefill_attention_fallback(
         q, k, v, scaling_, num_heads_, num_kv_heads_, head_dim_);

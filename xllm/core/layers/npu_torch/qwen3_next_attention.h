@@ -55,6 +55,7 @@ class Qwen3NextAttentionImpl : public torch::nn::Module {
   int64_t kv_size_;
   float scaling_;
   bool attn_output_gate_;
+  bool enable_torch_prefill_fallback_ = false;
   int32_t layer_id_;
   int32_t rank_;
 
