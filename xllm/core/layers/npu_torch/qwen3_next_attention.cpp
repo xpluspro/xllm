@@ -24,6 +24,11 @@ namespace layer {
 
 namespace {
 
+inline bool is_qwen3_5_variant(const std::string& model_type) {
+  constexpr char kPrefix[] = "qwen3_5";
+  return model_type.rfind(kPrefix, 0) == 0;
+}
+
 torch::Tensor run_torch_prefill_attention_fallback(const torch::Tensor& q,
                                                    const torch::Tensor& k,
                                                    const torch::Tensor& v,
@@ -33,10 +38,11 @@ torch::Tensor run_torch_prefill_attention_fallback(const torch::Tensor& q,
                                                    int64_t head_dim) {
   const int64_t num_tokens = q.size(0);
   const int64_t kv_repeats = num_heads / num_kv_heads;
+  const auto out_dtype = q.scalar_type();
 
   auto q_3d = q.view({num_tokens, num_heads, head_dim}).to(torch::kFloat32);
-  auto k_3d = k.view({num_tokens, num_kv_heads, head_dim});
-  auto v_3d = v.view({num_tokens, num_kv_heads, head_dim});
+  auto k_3d = k.view({num_tokens, num_kv_heads, head_dim}).to(torch::kFloat32);
+  auto v_3d = v.view({num_tokens, num_kv_heads, head_dim}).to(torch::kFloat32);
 
   auto k_expand =
       k_3d.unsqueeze(3).expand({-1, -1, -1, kv_repeats}).permute({0, 1, 3, 2});
@@ -46,7 +52,7 @@ torch::Tensor run_torch_prefill_attention_fallback(const torch::Tensor& q,
   auto v_rep = v_expand.reshape({num_tokens, num_heads, head_dim});
 
   auto q_htd = q_3d.permute({1, 0, 2});
-  auto k_hdt = k_rep.to(torch::kFloat32).permute({1, 2, 0});
+  auto k_hdt = k_rep.permute({1, 2, 0});
   auto scores = torch::bmm(q_htd, k_hdt) * scale;
 
   auto causal = torch::triu(
@@ -56,9 +62,11 @@ torch::Tensor run_torch_prefill_attention_fallback(const torch::Tensor& q,
   scores = scores.masked_fill(causal.unsqueeze(0),
                               -std::numeric_limits<float>::infinity());
 
-  auto attn = torch::softmax(scores, -1).to(q.scalar_type());
+  auto attn = torch::softmax(scores, -1);
   auto out = torch::bmm(attn, v_rep.permute({1, 0, 2}));
-  return out.permute({1, 0, 2}).reshape({num_tokens, num_heads * head_dim});
+  return out.permute({1, 0, 2})
+      .reshape({num_tokens, num_heads * head_dim})
+      .to(out_dtype);
 }
 
 }  // namespace
@@ -92,13 +100,7 @@ Qwen3NextAttentionImpl::Qwen3NextAttentionImpl(
   kv_size_ = num_kv_heads_ * head_dim_;
   scaling_ = 1.0f / std::sqrt(static_cast<float>(head_dim_));
   attn_output_gate_ = args.attn_output_gate();
-  const std::string& model_type = args.model_type();
-  enable_torch_prefill_fallback_ = model_type == "qwen3_5" ||
-                                   model_type == "qwen3_5_text" ||
-                                   model_type == "qwen3_5_moe" ||
-                                   model_type == "qwen3_5_moe_text" ||
-                                   model_type == "qwen3_5_mtp" ||
-                                   model_type == "qwen3_5_moe_mtp";
+  enable_torch_prefill_fallback_ = is_qwen3_5_variant(args.model_type());
   // 1. QKV linear
   qkv_proj_ = register_module(
       "qkv_proj",
@@ -219,6 +221,9 @@ torch::Tensor Qwen3NextAttentionImpl::forward(
   if (enable_torch_prefill_fallback_ && attn_metadata.is_prefill &&
       !attn_metadata.is_chunked_prefill &&
       !torch::isfinite(out).all().item<bool>()) {
+    LOG_EVERY_N(WARNING, 100)
+        << "Qwen3.5 NPU full attention produced non-finite output at layer "
+        << layer_id_ << ", using torch prefill fallback.";
     out = run_torch_prefill_attention_fallback(
         q, k, v, scaling_, num_heads_, num_kv_heads_, head_dim_);
   }
