@@ -17,9 +17,51 @@ limitations under the License.
 
 #include <glog/logging.h>
 
+#include <limits>
 #include <tuple>
 namespace xllm {
 namespace layer {
+
+namespace {
+
+torch::Tensor run_torch_prefill_attention_fallback(const torch::Tensor& q,
+                                                   const torch::Tensor& k,
+                                                   const torch::Tensor& v,
+                                                   float scale,
+                                                   int64_t num_heads,
+                                                   int64_t num_kv_heads,
+                                                   int64_t head_dim) {
+  const int64_t num_tokens = q.size(0);
+  const int64_t kv_repeats = num_heads / num_kv_heads;
+
+  auto q_3d = q.view({num_tokens, num_heads, head_dim}).to(torch::kFloat32);
+  auto k_3d = k.view({num_tokens, num_kv_heads, head_dim});
+  auto v_3d = v.view({num_tokens, num_kv_heads, head_dim});
+
+  auto k_expand =
+      k_3d.unsqueeze(3).expand({-1, -1, -1, kv_repeats}).permute({0, 1, 3, 2});
+  auto v_expand =
+      v_3d.unsqueeze(3).expand({-1, -1, -1, kv_repeats}).permute({0, 1, 3, 2});
+  auto k_rep = k_expand.reshape({num_tokens, num_heads, head_dim});
+  auto v_rep = v_expand.reshape({num_tokens, num_heads, head_dim});
+
+  auto q_htd = q_3d.permute({1, 0, 2});
+  auto k_hdt = k_rep.to(torch::kFloat32).permute({1, 2, 0});
+  auto scores = torch::bmm(q_htd, k_hdt) * scale;
+
+  auto causal = torch::triu(
+      torch::ones({num_tokens, num_tokens},
+                  torch::TensorOptions().dtype(torch::kBool).device(q.device())),
+      /*diagonal=*/1);
+  scores = scores.masked_fill(causal.unsqueeze(0),
+                              -std::numeric_limits<float>::infinity());
+
+  auto attn = torch::softmax(scores, -1).to(q.scalar_type());
+  auto out = torch::bmm(attn, v_rep.permute({1, 0, 2}));
+  return out.permute({1, 0, 2}).reshape({num_tokens, num_heads * head_dim});
+}
+
+}  // namespace
 
 Qwen3NextAttentionImpl::Qwen3NextAttentionImpl(
     const ModelArgs& args,
@@ -167,6 +209,11 @@ torch::Tensor Qwen3NextAttentionImpl::forward(
 
   rotary_emb_->forward(positions, q, k);
   auto out = std::get<0>(attn_->forward(attn_metadata, q, k, v, kv_cache));
+  if (attn_metadata.is_prefill && !attn_metadata.is_chunked_prefill &&
+      !torch::isfinite(out).all().item<bool>()) {
+    out = run_torch_prefill_attention_fallback(
+        q, k, v, scaling_, num_heads_, num_kv_heads_, head_dim_);
+  }
 
   if (attn_output_gate_) {
     gate = torch::sigmoid(gate);
