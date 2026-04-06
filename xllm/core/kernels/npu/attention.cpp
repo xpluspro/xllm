@@ -13,9 +13,29 @@ See the License for the specific language governing permissions and
 limitations under the License.
 ==============================================================================*/
 
+#include <glog/logging.h>
+
+#include <sstream>
+
 #include "npu_ops_api.h"
 #include "ops_npu/npu_ops.h"
+
 namespace xllm::kernel::npu {
+
+namespace {
+
+std::string TensorBrief(const torch::Tensor& t) {
+  if (!t.defined()) {
+    return "undefined";
+  }
+  std::ostringstream oss;
+  oss << "sizes=" << t.sizes()
+      << ", dtype=" << static_cast<int>(t.scalar_type())
+      << ", device=" << t.device() << ", contiguous=" << t.is_contiguous();
+  return oss.str();
+}
+
+}  // namespace
 
 void reshape_paged_cache(torch::Tensor& key,
                          std::optional<torch::Tensor>& value,
@@ -35,6 +55,14 @@ void batch_prefill(const torch::Tensor& query,
                    torch::Tensor& output) {
   int64_t num_heads = query.size(-2);
   int64_t num_kv_heads = key.size(-2);
+  VLOG(1) << "[npu::batch_prefill] scale=" << scale
+          << ", num_heads=" << num_heads << ", num_kv_heads=" << num_kv_heads
+          << ", query{" << TensorBrief(query) << "}"
+          << ", key{" << TensorBrief(key) << "}"
+          << ", value{" << TensorBrief(value) << "}"
+          << ", mask{" << TensorBrief(mask) << "}"
+          << ", seq_len{" << TensorBrief(seq_len) << "}"
+          << ", output{" << TensorBrief(output) << "}";
   atb::npu_flash_attention(
       query, key, value, mask, seq_len, scale, num_heads, num_kv_heads, output);
 }
@@ -51,6 +79,14 @@ void batch_decode(const torch::Tensor& query,
   int64_t num_kv_heads = k_cache.size(-2);
   auto q = query.view({-1, num_heads, head_size});
   auto o = output.view({-1, num_heads, head_size});
+  VLOG(1) << "[npu::batch_decode] scale=" << scale
+          << ", num_heads=" << num_heads << ", num_kv_heads=" << num_kv_heads
+          << ", query{" << TensorBrief(query) << "}"
+          << ", k_cache{" << TensorBrief(k_cache) << "}"
+          << ", v_cache{" << TensorBrief(v_cache) << "}"
+          << ", block_table{" << TensorBrief(block_table) << "}"
+          << ", seq_lens{" << TensorBrief(seq_lens) << "}"
+          << ", output{" << TensorBrief(output) << "}";
   atb::npu_paged_attention(q,
                            k_cache,
                            v_cache,

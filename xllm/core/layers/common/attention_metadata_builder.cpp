@@ -15,7 +15,10 @@ limitations under the License.
 
 #include "attention_metadata_builder.h"
 
+#include <glog/logging.h>
+
 #include <numeric>
+#include <sstream>
 
 #include "attention_metadata.h"
 #include "core/common/global_flags.h"
@@ -25,6 +28,33 @@ limitations under the License.
 namespace xllm::layer {
 
 namespace {
+
+std::string TensorBrief(const torch::Tensor& t) {
+  if (!t.defined()) {
+    return "undefined";
+  }
+  std::ostringstream oss;
+  oss << "sizes=" << t.sizes()
+      << ", dtype=" << static_cast<int>(t.scalar_type())
+      << ", device=" << t.device() << ", contiguous=" << t.is_contiguous();
+  return oss.str();
+}
+
+std::string VecPreview(const std::vector<int>& v, size_t limit = 8) {
+  std::ostringstream oss;
+  oss << "size=" << v.size() << ", values=[";
+  for (size_t i = 0; i < v.size() && i < limit; ++i) {
+    if (i > 0) {
+      oss << ",";
+    }
+    oss << v[i];
+  }
+  if (v.size() > limit) {
+    oss << ",...";
+  }
+  oss << "]";
+  return oss.str();
+}
 
 AttentionMetadata build_attention_metadata(
     const ModelInputParams& params,
@@ -127,6 +157,22 @@ AttentionMetadata build_attention_metadata(
   // (non-causal) Default to true (causal) if not explicitly set
   attn_metadata.is_causal =
       attn_metadata.is_prefill || attn_metadata.is_chunked_prefill;
+
+  VLOG(1) << "[AttentionMetadataBuilder] batch_forward_type="
+          << params.batch_forward_type.to_string()
+          << ", num_sequences=" << params.num_sequences
+          << ", q_max_seq_len=" << params.q_max_seq_len
+          << ", kv_max_seq_len=" << params.kv_max_seq_len
+          << ", is_prefill=" << attn_metadata.is_prefill
+          << ", is_chunked_prefill=" << attn_metadata.is_chunked_prefill
+          << ", is_causal=" << attn_metadata.is_causal << ", q_seq_lens_vec{"
+          << VecPreview(params.q_seq_lens_vec) << "}"
+          << ", kv_seq_lens_vec{" << VecPreview(params.kv_seq_lens_vec) << "}"
+          << ", block_tables{" << TensorBrief(params.block_tables) << "}"
+          << ", new_cache_slots{" << TensorBrief(params.new_cache_slots) << "}"
+          << ", q_seq_lens{" << TensorBrief(params.q_seq_lens) << "}"
+          << ", kv_seq_lens{" << TensorBrief(params.kv_seq_lens) << "}"
+          << ", attn_mask{" << TensorBrief(attn_metadata.attn_mask) << "}";
 
   // Copy enable_cuda_graph flag from params
   attn_metadata.enable_cuda_graph = params.enable_cuda_graph;
