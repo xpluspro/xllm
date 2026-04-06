@@ -17,7 +17,6 @@ limitations under the License.
 
 #include <glog/logging.h>
 
-#include <limits>
 #include <tuple>
 namespace xllm {
 namespace layer {
@@ -32,7 +31,6 @@ inline bool is_qwen3_5_variant(const std::string& model_type) {
 torch::Tensor run_torch_prefill_attention_fallback(const torch::Tensor& q,
                                                    const torch::Tensor& k,
                                                    const torch::Tensor& v,
-                                                   float scale,
                                                    int64_t num_heads,
                                                    int64_t num_kv_heads,
                                                    int64_t head_dim) {
@@ -51,20 +49,14 @@ torch::Tensor run_torch_prefill_attention_fallback(const torch::Tensor& q,
   auto k_rep = k_expand.reshape({num_tokens, num_heads, head_dim});
   auto v_rep = v_expand.reshape({num_tokens, num_heads, head_dim});
 
-  auto q_htd = q_3d.permute({1, 0, 2});
-  auto k_hdt = k_rep.permute({1, 2, 0});
-  auto scores = torch::bmm(q_htd, k_hdt) * scale;
+  auto q_sdpa = q_3d.permute({1, 0, 2}).unsqueeze(0);
+  auto k_sdpa = k_rep.permute({1, 0, 2}).unsqueeze(0);
+  auto v_sdpa = v_rep.permute({1, 0, 2}).unsqueeze(0);
 
-  auto causal = torch::triu(
-      torch::ones({num_tokens, num_tokens},
-                  torch::TensorOptions().dtype(torch::kBool).device(q.device())),
-      /*diagonal=*/1);
-  scores = scores.masked_fill(causal.unsqueeze(0),
-                              -std::numeric_limits<float>::infinity());
-
-  auto attn = torch::softmax(scores, -1);
-  auto out = torch::bmm(attn, v_rep.permute({1, 0, 2}));
-  return out.permute({1, 0, 2})
+  auto out = at::scaled_dot_product_attention(
+      q_sdpa, k_sdpa, v_sdpa, c10::nullopt, 0.0, true);
+  return out.squeeze(0)
+      .permute({1, 0, 2})
       .reshape({num_tokens, num_heads * head_dim})
       .to(out_dtype);
 }
@@ -225,7 +217,7 @@ torch::Tensor Qwen3NextAttentionImpl::forward(
         << "Qwen3.5 NPU full attention produced non-finite output at layer "
         << layer_id_ << ", using torch prefill fallback.";
     out = run_torch_prefill_attention_fallback(
-        q, k, v, scaling_, num_heads_, num_kv_heads_, head_dim_);
+        q, k, v, num_heads_, num_kv_heads_, head_dim_);
   }
 
   if (attn_output_gate_) {
