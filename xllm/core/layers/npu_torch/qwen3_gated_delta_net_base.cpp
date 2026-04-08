@@ -455,7 +455,7 @@ torch::Tensor Qwen3GatedDeltaNetBaseImpl::forward(
 torch::Tensor Qwen3GatedDeltaNetBaseImpl::reshape_qkvz_unpad(
     const AttentionMetadata& attn_metadata,
     const torch::Tensor& padded_qkvz) const {
-  if (!is_prefill_like) {
+  if (!attn_metadata.is_prefill && !attn_metadata.is_chunked_prefill) {
     return padded_qkvz;
   }
   std::vector<torch::Tensor> valid_batches;
@@ -477,7 +477,7 @@ torch::Tensor Qwen3GatedDeltaNetBaseImpl::reshape_qkvz_with_pad(
   int64_t bs = attn_metadata.q_seq_lens.size(0);
   int64_t max_len = attn_metadata.max_query_len;
   const auto& start_loc = attn_metadata.q_seq_lens;
-  if (!is_prefill_like) {
+  if (!attn_metadata.is_prefill && !attn_metadata.is_chunked_prefill) {
     return qkvz.view({bs, -1, qkvz.size(-1)});
   }
   std::vector<torch::Tensor> batches;
