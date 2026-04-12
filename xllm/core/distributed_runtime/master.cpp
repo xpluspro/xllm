@@ -15,6 +15,7 @@ limitations under the License.
 
 #include "master.h"
 
+#include <algorithm>
 #include <gflags/gflags.h>
 #include <glog/logging.h>
 #include <unistd.h>
@@ -100,8 +101,14 @@ void print_startup_banner(const std::filesystem::path& model_path,
 namespace {
 
 #if defined(USE_NPU)
-bool is_qwen3_5_dense_model_type(const std::string& model_type) {
-  return model_type == "qwen3_5" || model_type == "qwen3_5_text";
+bool is_multi_stream_parallel_supported_model_type(
+    const std::string& model_type) {
+  static constexpr std::array<std::string_view, 5>
+      kMultiStreamSupportedModelTypes = {
+          "deepseek_v2", "deepseek_v3", "deepseek_v32", "qwen3", "qwen3_5"};
+  return std::find(kMultiStreamSupportedModelTypes.begin(),
+                   kMultiStreamSupportedModelTypes.end(),
+                   model_type) != kMultiStreamSupportedModelTypes.end();
 }
 
 void resolve_npu_kernel_backend_for_options(Options* options) {
@@ -175,13 +182,15 @@ Master::Master(const Options& options, EngineType type)
   FLAGS_enable_multi_stream_parallel = false;
   if (enable_multi_stream_parallel) {
     const std::string model_type = get_model_type(options_.model_path());
-    if (is_qwen3_5_dense_model_type(model_type)) {
+    if (is_multi_stream_parallel_supported_model_type(model_type)) {
       FLAGS_enable_multi_stream_parallel = true;
       LOG(INFO) << "Enable multi-stream parallel for model_type=" << model_type;
     } else {
       LOG(WARNING)
           << "Disable multi-stream parallel for unsupported model_type="
-          << model_type << ". Currently only qwen3.5 dense is supported.";
+          << model_type
+          << ". Supported model types: deepseek_v2, deepseek_v3, deepseek_v32, "
+             "qwen3, qwen3_5.";
     }
   }
   // construct engine

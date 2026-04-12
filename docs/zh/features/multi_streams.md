@@ -26,4 +26,4 @@ prefill双流并行开启后，基本可掩盖75以上的通信开销，在DeepS
 
 !!! warning "注意"
     双流并行目前只支持prefill阶段，请求输入越长，收益越大。
-    目前仅支持Qwen3.5 dense（非MoE）模型。
+    目前支持DeepSeek、Qwen3 dense（非MoE）和Qwen3.5 dense（非MoE）模型。

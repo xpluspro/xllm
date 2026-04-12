@@ -28,4 +28,4 @@ On the DeepSeek-R1 model, when generating just 1 token, this achieves:
 
 ## Notice
 The dual-stream parallelism currently only supports the prefill phase, with greater performance benefits observed for longer input requests.
-Only supports Qwen3.5 dense (non-MoE) models.
+Supports DeepSeek, Qwen3 dense (non-MoE), and Qwen3.5 dense (non-MoE) models.
