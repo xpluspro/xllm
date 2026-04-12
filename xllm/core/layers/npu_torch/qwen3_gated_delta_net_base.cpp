@@ -456,6 +456,8 @@ torch::Tensor Qwen3GatedDeltaNetBaseImpl::forward(
 torch::Tensor Qwen3GatedDeltaNetBaseImpl::reshape_qkvz_unpad(
     const AttentionMetadata& attn_metadata,
     const torch::Tensor& padded_qkvz) const {
+  const bool is_prefill_like =
+      attn_metadata.is_prefill || attn_metadata.is_chunked_prefill;
   if (!is_prefill_like) {
     return padded_qkvz;
   }
@@ -475,6 +477,8 @@ torch::Tensor Qwen3GatedDeltaNetBaseImpl::reshape_qkvz_unpad(
 torch::Tensor Qwen3GatedDeltaNetBaseImpl::reshape_qkvz_with_pad(
     const AttentionMetadata& attn_metadata,
     const torch::Tensor& qkvz) const {
+  const bool is_prefill_like =
+      attn_metadata.is_prefill || attn_metadata.is_chunked_prefill;
   int64_t bs = attn_metadata.q_seq_lens.size(0);
   int64_t max_len = attn_metadata.max_query_len;
   const auto& start_loc = attn_metadata.q_seq_lens;
