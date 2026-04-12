@@ -100,6 +100,10 @@ void print_startup_banner(const std::filesystem::path& model_path,
 namespace {
 
 #if defined(USE_NPU)
+bool is_qwen3_5_dense_model_type(const std::string& model_type) {
+  return model_type == "qwen3_5" || model_type == "qwen3_5_text";
+}
+
 void resolve_npu_kernel_backend_for_options(Options* options) {
   CHECK(options != nullptr) << "options must not be null";
   if (options->backend() == "dit") {
@@ -166,11 +170,19 @@ Master::Master(const Options& options, EngineType type)
   }
   resolve_npu_kernel_backend_for_options(&options_);
 #endif
-  FLAGS_enable_multi_stream_parallel =
+  const bool enable_multi_stream_parallel =
       options.enable_multi_stream_parallel() && (options.nnodes() > 1);
-  if (FLAGS_enable_multi_stream_parallel) {
-    LOG(FATAL)
-        << "Multi-stream parallel is refactoring now, will be supported later.";
+  FLAGS_enable_multi_stream_parallel = false;
+  if (enable_multi_stream_parallel) {
+    const std::string model_type = get_model_type(options_.model_path());
+    if (is_qwen3_5_dense_model_type(model_type)) {
+      FLAGS_enable_multi_stream_parallel = true;
+      LOG(INFO) << "Enable multi-stream parallel for model_type=" << model_type;
+    } else {
+      LOG(WARNING)
+          << "Disable multi-stream parallel for unsupported model_type="
+          << model_type << ". Currently only qwen3.5 dense is supported.";
+    }
   }
   // construct engine
   const auto devices =
