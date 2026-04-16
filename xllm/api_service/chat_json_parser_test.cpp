@@ -140,8 +140,8 @@ TEST_F(PreprocessChatJsonTest, ImageUrlErrorsOnTextOnly) {
     }]
   })";
   LlmChatJsonParser llm_parser;
-  expect_error(input, llm_parser, "multimodal backend");
-  expect_error(input, llm_parser, "-backend vlm");
+  expect_error(input, llm_parser, "vision-language model");
+  expect_error(input, llm_parser, "--backend=vlm");
 }
 
 TEST_F(PreprocessChatJsonTest, MultipleMessagesWithMixedContent) {

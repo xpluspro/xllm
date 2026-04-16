@@ -61,6 +61,31 @@ void validate_flags(const std::string& model_type) {
     LOG(FATAL) << "Model is not supported currently, model type: "
                << model_type;
   }
+  // Validate that --backend is compatible with the model's registered backend.
+  // This catches mismatches such as specifying --backend=vlm for a text-only
+  // model, which would otherwise fail during model loading with a confusing
+  // error. For multimodal (image) input, a vision-language model variant is
+  // required (e.g., Qwen3-VL with model_type 'qwen3_vl'); a text-only model
+  // (e.g., Qwen3.5 with model_type 'qwen3_5') cannot process images regardless
+  // of the --backend flag.
+  // Note: model_type is empty when --backend=dit, because DiT models skip the
+  // config.json model_type lookup. The guard below skips the check in that case.
+  if (!model_type.empty()) {
+    const std::string registered_backend =
+        ModelRegistry::get_model_backend(model_type);
+    if (!registered_backend.empty() && registered_backend != FLAGS_backend) {
+      std::string hint;
+      if (FLAGS_backend == "vlm") {
+        hint =
+            " For image/multimodal input, launch xllm with a vision-language "
+            "model (e.g., Qwen3-VL, model_type 'qwen3_vl') instead of a "
+            "text-only model (e.g., Qwen3.5, model_type 'qwen3_5').";
+      }
+      LOG(FATAL) << "Model type '" << model_type << "' requires --backend="
+                 << registered_backend << " but --backend=" << FLAGS_backend
+                 << " was specified." << hint;
+    }
+  }
   if (FLAGS_enable_prefill_sp &&
       !prefill_sp_supported_model_set.contains(model_type)) {
     LOG(FATAL) << "enable_prefill_sp is not supported for model_type="

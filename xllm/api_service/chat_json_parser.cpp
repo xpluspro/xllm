@@ -64,8 +64,10 @@ std::pair<Status, std::string> LlmChatJsonParser::preprocess(
           }
           if (!item.contains("type") || item["type"] != "text") {
             return {Status(StatusCode::INVALID_ARGUMENT,
-                           "Non-text content (e.g., image_url) requires "
-                           "multimodal backend (-backend vlm)"),
+                           "Non-text content (e.g., image_url) requires a "
+                           "vision-language model with --backend=vlm (e.g., "
+                           "Qwen3-VL). Text-only models such as Qwen3.5 do "
+                           "not support image input."),
                     ""};
           }
           if (!item.contains("text") || !item["text"].is_string()) {
